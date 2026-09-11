@@ -747,6 +747,93 @@ def poll(overlay, q, icon):
     overlay.root.after(50, lambda: poll(overlay, q, icon))
 
 
+def hear_mode():
+    """Live diagnostic: `py -3.13 jarvis.py --hear`
+
+    Shows what the microphone actually hears and what the wake model scores,
+    so "it doesn't react" becomes a number instead of a guess. Safe to run
+    while Jarvis is running - Windows lets both read the mic.
+    """
+    pa = pyaudio.PyAudio()
+    mic = Mic(pa)
+    if not mic.open():
+        print("could not open the microphone")
+        return 1
+    oww = Model(wakeword_models=["hey_jarvis_v0.1"], inference_framework="onnx")
+    rec = sr.Recognizer()
+    rec.dynamic_energy_threshold = True
+    rec.pause_threshold = 1.0
+    try:
+        rec.adjust_for_ambient_noise(mic.source, duration=0.8)
+    except Exception:
+        pass
+    print("mic: %s" % pa.get_default_input_device_info()["name"])
+    print("room noise level: %.0f" % rec.energy_threshold)
+    print('say "hey jarvis" - the bar is the wake score, %.2f fires. Ctrl+C to stop.\n'
+          % THRESHOLD)
+    hot = 0
+    try:
+        while True:
+            frame = mic.frame()
+            rms = float(np.sqrt(np.mean(frame.astype(np.float32) ** 2)))
+            score = oww.predict(frame)["hey_jarvis_v0.1"]
+            bar = "#" * int(score * 40)
+            print("  volume %5.0f  wake %.3f |%-40s|" % (rms, score, bar),
+                  end="\r", flush=True)
+            hot = hot + 1 if score >= THRESHOLD else 0
+            if hot >= WAKE_FRAMES:
+                print("\n  >>> WAKE WORD HEARD - say a command now")
+                text, reason = transcribe(rec, mic)
+                print("  >>> %s\n" % (("heard: %r" % text) if text
+                                      else "nothing understood (%s)" % reason))
+                hot = 0
+                oww.reset()
+    except KeyboardInterrupt:
+        print("\nstopped")
+    finally:
+        mic.close()
+        pa.terminate()
+    return 0
+
+
+def check_mode():
+    """`py -3.13 jarvis.py --check` - is every part actually working?"""
+    ok = True
+    print("brain (OmniRoute):", end=" ")
+    if omniroute_up():
+        reply = think([{"role": "user", "content": "say ready in one word"}])
+        print("OK ->", reply.replace("\n", " ")[:60])
+    else:
+        print("NOT RUNNING")
+        ok = False
+    print("microphone:", end=" ")
+    pa = pyaudio.PyAudio()
+    mic = Mic(pa)
+    if mic.open(tries=1):
+        f = mic.frame()
+        print("OK (%s, %d samples)" % (pa.get_default_input_device_info()["name"], len(f)))
+        mic.close()
+    else:
+        print("FAILED")
+        ok = False
+    pa.terminate()
+    print("wake model:", end=" ")
+    try:
+        Model(wakeword_models=["hey_jarvis_v0.1"], inference_framework="onnx")
+        print("OK")
+    except Exception as exc:
+        print("FAILED:", exc)
+        ok = False
+    print("voice:", end=" ")
+    sp = Speaker()
+    sp.start()
+    sp.say("Check complete.")
+    sp.wait_idle(20)
+    print("OK" if not sp.busy else "did not finish")
+    print("\n%s" % ("all good" if ok else "something is broken - see above"))
+    return 0 if ok else 1
+
+
 def claim_single_instance():
     """Only one Jarvis may hold the microphone. Autostart plus a manual launch
     would otherwise leave two instances fighting over it and neither working.
@@ -756,6 +843,10 @@ def claim_single_instance():
 
 
 def main():
+    if "--hear" in sys.argv:
+        return hear_mode()
+    if "--check" in sys.argv:
+        return check_mode()
     if not claim_single_instance():
         log("another Jarvis is already running - exiting")
         return 0
