@@ -20,12 +20,6 @@ try:
 except Exception:
     pass
 
-# Only one Jarvis may hold the microphone. Autostart plus a manual launch would
-# otherwise give two instances fighting over the mic, and neither works right.
-_MUTEX = ctypes.windll.kernel32.CreateMutexW(None, False, "JarvisVoiceAssistant")
-if ctypes.windll.kernel32.GetLastError() == 183:      # ERROR_ALREADY_EXISTS
-    sys.exit(0)
-
 # Keep a log next to the script. Under pythonw.exe (autostart) there is no
 # console at all, so stdout/stderr are None and a bare print() would crash.
 LOG_PATH = Path(__file__).with_name("jarvis.log")
@@ -324,26 +318,44 @@ def omniroute_up():
         return False
 
 
-def ensure_omniroute(wait=True):
-    """Start the local OmniRoute server if it is not already running."""
+# Measured on this machine: a cold `omniroute serve` needs ~75 s before it
+# answers. The lock guarantees only ever one launcher, otherwise every failed
+# command would spawn another server racing for the same port.
+_omni_lock = threading.Lock()
+OMNI_COLD_START = 180
+
+
+def omniroute_starting():
+    return _omni_lock.locked()
+
+
+def ensure_omniroute():
+    """Start the local OmniRoute server if it is not already running.
+    Safe to call from anywhere - concurrent calls collapse into one launch."""
     if omniroute_up():
         return True
-    log("starting OmniRoute...")
+    if not _omni_lock.acquire(blocking=False):
+        return False                      # another thread is already on it
     try:
-        subprocess.Popen("omniroute serve", shell=True,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception as exc:
-        log("could not launch omniroute:", exc)
-        return False
-    if not wait:
-        return False
-    for _ in range(20):
-        time.sleep(1.5)
         if omniroute_up():
-            log("OmniRoute is up")
             return True
-    log("OmniRoute did not come up")
-    return False
+        log("starting OmniRoute (cold start takes over a minute)...")
+        try:
+            subprocess.Popen("omniroute serve", shell=True,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as exc:
+            log("could not launch omniroute:", exc)
+            return False
+        started = time.time()
+        while time.time() - started < OMNI_COLD_START:
+            time.sleep(2.0)
+            if omniroute_up():
+                log("OmniRoute is up after %.0f s" % (time.time() - started))
+                return True
+        log("OmniRoute did not come up within %d s" % OMNI_COLD_START)
+        return False
+    finally:
+        _omni_lock.release()
 
 
 def think(history):
@@ -363,9 +375,11 @@ def think(history):
             log("brain returned no choices (%s): %s" % (model, str(data)[:200]))
         except requests.RequestException as exc:
             log("think error (%s): %s" % (model, exc))
+    if omniroute_starting():
+        return "My brain is still starting up, give it a minute."
     # Bring the server back up in the background so the next command works.
     threading.Thread(target=ensure_omniroute, daemon=True).start()
-    return "My brain is offline, I'm starting it now. Try again in a moment."
+    return "My brain is offline, I'm starting it now. Try again in a minute."
 
 # ─────────────────────────── actions ───────────────────────────
 
@@ -733,7 +747,18 @@ def poll(overlay, q, icon):
     overlay.root.after(50, lambda: poll(overlay, q, icon))
 
 
+def claim_single_instance():
+    """Only one Jarvis may hold the microphone. Autostart plus a manual launch
+    would otherwise leave two instances fighting over it and neither working.
+    Kept out of import so the module stays testable while Jarvis is running."""
+    ctypes.windll.kernel32.CreateMutexW(None, False, "JarvisVoiceAssistant")
+    return ctypes.windll.kernel32.GetLastError() != 183   # ERROR_ALREADY_EXISTS
+
+
 def main():
+    if not claim_single_instance():
+        log("another Jarvis is already running - exiting")
+        return 0
     log("=== Jarvis starting ===")
     overlay = Overlay()
     q = queue.Queue()
