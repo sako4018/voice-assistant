@@ -1,6 +1,9 @@
 __pycache__/
 *.pyc
 
+# Лични настройки (клавиш, микрофон...) - repo-то носи само config.example.json
+config.json
+
 # Работни файлове — лични записи и логове, не отиват в repo-то
 jarvis.log
 jarvis.log.1
