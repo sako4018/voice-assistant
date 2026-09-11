@@ -1,9 +1,9 @@
 {
   "hotkey": "ctrl_r",
-  "language": "bg",
+  "language": "en",
   "whisper_model": "small",
   "whisper_device": "auto",
   "input_device": null,
   "speak_replies": true,
-  "tts_voice": "bg-BG-BorislavNeural"
+  "tts_voice": "David"
 }

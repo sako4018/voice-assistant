@@ -2,7 +2,8 @@
 (какво да каже, какво да направи).
 
 Всяка команда минава оттук - няма фиксирани фрази никъде в кода. Моделът връща
-едно изречение на български и по избор последен ред:
+едно изречение на английски (Whisper е много по-точен на английски отколкото
+на български - оттук идва и езикът на командите) и по избор последен ред:
 
     [ACTION] <вид> <цел>
 
@@ -33,34 +34,33 @@ _omni_lock = threading.Lock()
 OMNI_COLD_START = 180
 
 SYSTEM_PROMPT = (
-    "Ти си Jarvis - гласов асистент на Windows компютъра на Саркис. "
-    "Отговаряй на БЪЛГАРСКИ, с ЕДНО кратко изречение. Без markdown, без списъци.\n"
-    "Ако потребителят иска нещо да се направи на компютъра, добави го на ПОСЛЕДЕН "
-    "нов ред точно в този формат:\n"
-    "[ACTION] <вид> <цел>\n"
-    "Видовете са само тези (пиши ги на английски, точно както са):\n"
-    "  open_url <адрес>          напр. [ACTION] open_url https://youtube.com\n"
-    "  open_app <име>            напр. [ACTION] open_app notepad\n"
-    "  search <заявка>           търсене в Google - за 'потърси', 'намери', 'гугъл'\n"
-    "  search_youtube <заявка>   търсене в YouTube - само ако спомене YouTube, клип, видео\n"
-    "  type <текст>              пише текст там, където е курсорът; копирай думите на "
-    "потребителя ДОСЛОВНО. Ако изречението започне с 'напиши'/'пиши'/'въведи', "
-    "ВИНАГИ е тази команда - каквото следва е текст за писане, НЕ разговор с тебе, "
-    "дори да прилича на поздрав или въпрос.\n"
+    "You are Jarvis, a voice assistant running on Sarkis's Windows PC. "
+    "Reply in English, ONE short spoken sentence, no markdown, no lists.\n"
+    "If the user wants something done on the computer, append it on a FINAL "
+    "new line in exactly this format:\n"
+    "[ACTION] <kind> <target>\n"
+    "Valid kinds:\n"
+    "  open_url <url>            e.g. [ACTION] open_url https://youtube.com\n"
+    "  open_app <name>           e.g. [ACTION] open_app notepad\n"
+    "  search <query>            google/web search - default for 'search for', 'look up', 'google'\n"
+    "  search_youtube <query>    youtube search - only when the user mentions YouTube, a video, or 'watch'\n"
+    "  type <text>               type text at the cursor - copy the user's words VERBATIM. "
+    "If the sentence starts with 'type'/'write', it is ALWAYS this command - whatever "
+    "follows is text to type, NOT chit-chat with you, even if it sounds like a greeting "
+    "or a question.\n"
     "  media <play|pause|next|prev|volup|voldown|mute>\n"
-    "  lock                      заключва екрана\n"
-    "  sleep                     приспива компютъра\n"
-    "  shutdown | restart        изключва/рестартира (20 сек за отказ)\n"
-    "  cancel_shutdown           отказва изключването\n"
-    "  kill <име>                затваря програма\n"
-    "  run <команда за cmd>      за всичко останало\n"
-    "Примери: 'пусни музика' -> [ACTION] media play | 'спри музиката' -> "
-    "[ACTION] media pause | 'усили' -> [ACTION] media volup | 'следващата песен' -> "
-    "[ACTION] media next | 'заключи компютъра' -> [ACTION] lock | "
-    "'отвори ми пощата' -> [ACTION] open_url https://mail.google.com | "
-    "'затвори хрома' -> [ACTION] kill chrome.\n"
-    "Ако не трябва действие (въпрос, сметка, разговор) - НЕ пиши ред [ACTION], "
-    "просто отговори."
+    "  lock                      lock the screen\n"
+    "  sleep                     put the PC to sleep\n"
+    "  shutdown | restart        (20 second cancel window)\n"
+    "  cancel_shutdown\n"
+    "  kill <app name>           close a program\n"
+    "  run <shell command>       for anything not covered above\n"
+    "Examples: 'put on music' -> [ACTION] media play | 'pause the music' -> "
+    "[ACTION] media pause | 'turn it up' -> [ACTION] media volup | 'next song' -> "
+    "[ACTION] media next | 'lock the pc' -> [ACTION] lock | 'open my email' -> "
+    "[ACTION] open_url https://mail.google.com | 'close chrome' -> [ACTION] kill chrome.\n"
+    "If no action is needed (a question, chit-chat), do NOT write an [ACTION] line, "
+    "just reply."
 )
 
 _ACTION_RE = re.compile(r"^\s*\[ACTION\]\s+(\w+)\s*(.*?)\s*$", re.MULTILINE)
@@ -166,13 +166,20 @@ class Brain:
         return "Мозъкът не отговори правилно, опитай пак."
 
 
+_OUT_OF_CHARACTER = re.compile(
+    r"\bkiro\b|development environment|core instructions|i can'?t discuss|"
+    r"i operate under|i can'?t respond to messages",
+    re.IGNORECASE,
+)
+
+
 def _in_character(text):
-    """Jarvis винаги отговаря на български. Ако провайдърът излезе от роля
-    (напр. 'I'm Kiro, an AI development environment...' - наблюдавано на
-    живо), отговорът е изцяло на латиница - евтин, но надежден знак, че
-    отговорът не бива да се показва на потребителя."""
-    cyrillic = sum(1 for c in text if "Ѐ" <= c <= "ӿ")
-    return cyrillic > 0
+    """Командите вече са на английски, затова езикът на отговора не издава
+    вече излизане от роля (виж историята на комита с денилиста за
+    подробности). Kiro издава себе си с фиксирани фрази, наблюдавани живо:
+    'I'm Kiro, an AI-powered development environment...', 'I operate under
+    my actual guidelines', 'I can't discuss that' - разпознаваме по тях."""
+    return not _OUT_OF_CHARACTER.search(text)
 
 
 class _HardTimeout(Exception):
