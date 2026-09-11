@@ -72,12 +72,13 @@ brain.log = log
 
 DEFAULTS = {
     "hotkey": "ctrl_r",              # десен Ctrl - рядко се ползва за друго
-    "language": "bg",
+    "language": "en",                # английски - Whisper е чувствително по-точен
+                                     # на английски, особено на малкия ("small") модел
     "whisper_model": "small",        # tiny | base | small | medium | large-v3
     "whisper_device": "auto",        # auto | cuda | cpu
     "input_device": None,            # None = каквото е по подразбиране в момента
     "speak_replies": True,
-    "tts_voice": "bg-BG-BorislavNeural",
+    "tts_voice": "David",            # SAPI глас - "David"/"Zira" на тази машина
 }
 
 CONFIG_PATH = HERE / "config.json"
@@ -132,16 +133,21 @@ def cue(name):
 
 
 class Voice(threading.Thread):
-    """Говори на български през edge-tts.
+    """Говори през pyttsx3 (офлайн SAPI глас) - без интернет за самия говор.
 
-    Windows няма български SAPI глас (проверено: само Hazel, David, Zira),
-    затова pyttsx3 от версия 1 не върши работа тук. edge-tts е безплатен и
-    не иска ключ, но иска интернет - няма ли, просто мълчи и остава тонът.
+    Версия 2 мина за кратко през edge-tts, защото Windows няма български
+    SAPI глас (само Hazel/David/Zira, всички английски). Щом командите се
+    върнаха на английски, тази причина отпада - pyttsx3 е по-прост път и
+    маха една зависимост от мрежата (която тази сесия увисна два пъти).
+
+    Свеж engine на всеки ред нарочно - реизползван engine тихо изпускаше
+    всяко изречение след първото (измерено в предната версия: 0.07 сек
+    "изговорено" срещу 3.2 сек реално).
     """
 
     def __init__(self, voice, enabled):
         super().__init__(daemon=True)
-        self.voice = voice
+        self.voice_hint = voice
         self.enabled = enabled
         self.q = queue.Queue()
         self._lock = threading.Lock()
@@ -177,35 +183,23 @@ class Voice(threading.Thread):
                     self._pending -= 1
 
     def _speak(self, text):
-        import asyncio
-        import io
+        import gc
 
-        import av
-        import edge_tts
+        import pyttsx3
 
-        async def grab():
-            buf = io.BytesIO()
-            comm = edge_tts.Communicate(text, self.voice)
-            async for chunk in comm.stream():
-                if chunk["type"] == "audio":
-                    buf.write(chunk["data"])
-            return buf
-
-        buf = asyncio.run(grab())
-        if not buf.tell():
-            return
-        buf.seek(0)
-        with av.open(buf, format="mp3") as container:
-            stream = container.streams.audio[0]
-            rate = stream.rate
-            chunks = [f.to_ndarray().reshape(-1) for f in container.decode(stream)]
-        if not chunks:
-            return
-        pcm = np.concatenate(chunks)
-        if pcm.dtype != np.float32:
-            pcm = pcm.astype(np.float32) / 32768.0
-        sd.play(pcm, rate)
-        sd.wait()
+        eng = pyttsx3.init()
+        try:
+            for v in eng.getProperty("voices"):
+                if self.voice_hint.lower() in v.name.lower():
+                    eng.setProperty("voice", v.id)
+                    break
+            eng.setProperty("rate", 185)
+            eng.say(text)
+            eng.runAndWait()
+            eng.stop()
+        finally:
+            del eng
+            gc.collect()
 
 # ─────────────────────────── рамка на екрана ───────────────────────────
 
