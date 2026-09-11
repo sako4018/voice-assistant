@@ -126,8 +126,11 @@ class Brain:
     def ask(self, history):
         """history = [{'role': 'user'|'assistant', 'content': ...}, ...]
 
-        Връща текста на отговора. Никога не хвърля - при проблем връща
-        изречение на български, което после се показва и изговаря.
+        Връща текста на отговора. Никога не хвърля и никога не виси -
+        видяно на живо: заявка към OmniRoute увисна над 5 минути (по-дълго
+        от requests-таймаута, вероятно мрежов проблем на самата машина).
+        Затова заявката се пуска в отделна нишка с твърд краен срок -
+        ask() винаги се връща, каквото и да прави мрежата.
         """
         if not omniroute_up():
             threading.Thread(target=ensure_omniroute, daemon=True).start()
@@ -140,13 +143,60 @@ class Brain:
                 "model": model, "stream": False, "max_tokens": 300,
                 "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
             }
-            try:
-                r = requests.post(API_URL, json=payload, timeout=TIMEOUT)
-                r.raise_for_status()
-                data = r.json()
-                if "choices" in data:
-                    return data["choices"][0]["message"]["content"].strip()
-                log("мозъкът не върна отговор (%s): %s" % (model, str(data)[:200]))
-            except requests.RequestException as exc:
-                log("грешка при мозъка (%s): %s" % (model, exc))
-        return "Мозъкът не отговаря в момента."
+            for attempt in range(2):    # kiro понякога излиза от роля - втори опит лекува повечето случаи
+                try:
+                    r = _post_with_hard_deadline(payload, TIMEOUT + 5)
+                    r.raise_for_status()
+                    data = r.json()
+                    if "choices" not in data:
+                        log("мозъкът не върна отговор (%s): %s" % (model, str(data)[:200]))
+                        break
+                    text = data["choices"][0]["message"]["content"].strip()
+                    if _in_character(text):
+                        return text
+                    log("мозъкът излезе от роля (%s, опит %d): %s"
+                        % (model, attempt + 1, text[:120]))
+                except _HardTimeout:
+                    log("мозъкът увисна над твърдия срок (%s) - продължавам без отговор"
+                        % model)
+                    break
+                except requests.RequestException as exc:
+                    log("грешка при мозъка (%s): %s" % (model, exc))
+                    break
+        return "Мозъкът не отговори правилно, опитай пак."
+
+
+def _in_character(text):
+    """Jarvis винаги отговаря на български. Ако провайдърът излезе от роля
+    (напр. 'I'm Kiro, an AI development environment...' - наблюдавано на
+    живо), отговорът е изцяло на латиница - евтин, но надежден знак, че
+    отговорът не бива да се показва на потребителя."""
+    cyrillic = sum(1 for c in text if "Ѐ" <= c <= "ӿ")
+    return cyrillic > 0
+
+
+class _HardTimeout(Exception):
+    pass
+
+
+def _post_with_hard_deadline(payload, deadline):
+    """requests(timeout=...) вече не помогна веднъж - заявката увисна много
+    по-дълго от подадения таймаут. Тук заявката тръгва в daemon нишка;
+    ask() спира да я чака след deadline секунди, каквото и да прави тя после
+    (заявката евентуално приключва сама на заден план и просто се изхвърля)."""
+    box = {}
+
+    def worker():
+        try:
+            box["r"] = requests.post(API_URL, json=payload, timeout=TIMEOUT)
+        except Exception as exc:
+            box["exc"] = exc
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    t.join(deadline)
+    if t.is_alive():
+        raise _HardTimeout()
+    if "exc" in box:
+        raise box["exc"]
+    return box["r"]
