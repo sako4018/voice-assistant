@@ -9,3 +9,6 @@ jarvis.log
 jarvis.log.1
 output.txt
 *.wav
+
+# Генерирано локално от graphify - не е част от проекта
+graphify-out/
