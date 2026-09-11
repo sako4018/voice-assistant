@@ -52,11 +52,23 @@ py -3.13 jarvis.py
 
 ## Автостарт
 
-Копирай `jarvis_autostart.vbs` в `shell:startup`. Върви скрито, без конзола.
-Логът е в `jarvis.log` до скрипта.
+Копирай **двата** `.vbs` файла в `shell:startup`:
+
+- `jarvis_autostart.vbs` — самият асистент, скрито, без конзола
+- `omniroute_autostart.vbs` — мозъкът, паралелно с Jarvis
+
+Вторият не е задължителен — Jarvis вдига OmniRoute сам, ако не върви. Но студеният
+старт на сървъра е около **75 секунди**, така че ако тръгне заедно с Windows, вече е
+топъл, когато кажеш първата команда.
+
+Пуска се само едно копие: ако Jarvis вече върви, второто излиза веднага, за да не си
+пречат за микрофона.
+
+Логът е в `jarvis.log` до скрипта (под `pythonw` няма конзола).
 
 ## Файлове
 
 - `jarvis.py` — асистентът
 - `speech_to_texy.py` — простата база: микрофон → текст в терминала
-- `jarvis_autostart.vbs` — стартиране с Windows
+- `jarvis_autostart.vbs` — стартиране на Jarvis с Windows
+- `omniroute_autostart.vbs` — стартиране на мозъка с Windows
